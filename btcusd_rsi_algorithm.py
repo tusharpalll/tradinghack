@@ -12,6 +12,7 @@ Strategy:
   Otherwise --> HOLD signal
 """
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -99,6 +100,74 @@ def fetch_and_analyze(name: str, ticker: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Chart visualization
+# ---------------------------------------------------------------------------
+
+def plot_results(results: dict) -> None:
+    """
+    Create a chart for each asset with two vertically stacked subplots:
+      - Top    : closing price with buy (▲ green) / sell (▼ red) markers
+      - Bottom : RSI with overbought (70) and oversold (30) reference lines
+    """
+    valid = {name: res for name, res in results.items() if "error" not in res}
+    if not valid:
+        print("No data available to plot.")
+        return
+
+    n = len(valid)
+    fig, axes = plt.subplots(nrows=n * 2, ncols=1, figsize=(14, 5 * n))
+    fig.suptitle("RSI Trading Signals", fontsize=16, fontweight="bold",
+                 y=1.01)  # push title above the topmost subplot
+
+    for i, (name, res) in enumerate(valid.items()):
+        df = res["data"].dropna(subset=["RSI"])
+        ax_price = axes[i * 2]
+        ax_rsi   = axes[i * 2 + 1]
+
+        # ---- Price subplot ----
+        ax_price.plot(df.index, df["Close"], color="steelblue",
+                      linewidth=1.2, label="Close")
+
+        buy_mask  = df["Signal"] == "BUY"
+        sell_mask = df["Signal"] == "SELL"
+
+        ax_price.scatter(df.index[buy_mask],  df.loc[buy_mask,  "Close"],
+                         marker="^", color="green", s=80, zorder=5, label="BUY")
+        ax_price.scatter(df.index[sell_mask], df.loc[sell_mask, "Close"],
+                         marker="v", color="red",   s=80, zorder=5, label="SELL")
+
+        ax_price.set_title(f"{name} ({res['ticker']}) — Closing Price",
+                           fontsize=12)
+        ax_price.set_ylabel("Price")
+        ax_price.legend(loc="upper left", fontsize=9)
+        ax_price.grid(True, linestyle="--", alpha=0.5)
+
+        # ---- RSI subplot ----
+        ax_rsi.plot(df.index, df["RSI"], color="darkorange",
+                    linewidth=1.2, label="RSI")
+        ax_rsi.axhline(RSI_OVERBOUGHT, color="red",   linestyle="--",
+                       linewidth=0.9, label=f"Overbought ({RSI_OVERBOUGHT})")
+        ax_rsi.axhline(RSI_OVERSOLD,   color="green", linestyle="--",
+                       linewidth=0.9, label=f"Oversold ({RSI_OVERSOLD})")
+        ax_rsi.fill_between(df.index, RSI_OVERSOLD, df["RSI"],
+                            where=(df["RSI"] < RSI_OVERSOLD),
+                            alpha=0.2, color="green")
+        ax_rsi.fill_between(df.index, RSI_OVERBOUGHT, df["RSI"],
+                            where=(df["RSI"] > RSI_OVERBOUGHT),
+                            alpha=0.2, color="red")
+
+        ax_rsi.set_ylim(0, 100)
+        ax_rsi.set_title(f"{name} — RSI ({RSI_PERIOD}-period)", fontsize=12)
+        ax_rsi.set_ylabel("RSI")
+        ax_rsi.set_xlabel("Date")
+        ax_rsi.legend(loc="upper left", fontsize=9)
+        ax_rsi.grid(True, linestyle="--", alpha=0.5)
+
+    plt.tight_layout()
+    plt.show()
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -146,6 +215,8 @@ def main():
     print()
     print("Legend:  RSI < 30 → BUY  |  RSI > 70 → SELL  |  Otherwise → HOLD")
     print("=" * 60)
+
+    plot_results(results)
 
     return results
 
