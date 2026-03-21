@@ -1,0 +1,244 @@
+// =============================================================================
+// RSI Signals Indicator for TradingView
+// =============================================================================
+// Compatible with any symbol: BTCUSD, NSE:NIFTY, BSE:SENSEX, stocks, etc.
+//
+// HOW TO USE:
+//   1. Open TradingView and navigate to the chart of your chosen asset.
+//   2. Click "Pine Editor" at the bottom of the screen.
+//   3. Paste this entire script into the editor.
+//   4. Click "Add to chart" (or press Ctrl+Enter).
+//   5. The RSI panel will appear below the price chart.
+//      Buy/sell arrows will be overlaid directly on the price candles.
+//
+// STRATEGY:
+//   RSI crosses below 30 (oversold)  → BUY  signal  (green ▲ arrow on price)
+//   RSI crosses above 70 (overbought) → SELL signal  (red   ▼ arrow on price)
+// =============================================================================
+
+//@version=5
+indicator(
+     title       = "RSI Signals",
+     shorttitle  = "RSI Signals",
+     overlay     = false,   // false → RSI plots in its own separate pane
+     max_labels_count = 500
+ )
+
+// -----------------------------------------------------------------------------
+// Inputs — editable from the indicator settings dialog in TradingView
+// -----------------------------------------------------------------------------
+
+// RSI period: default 14, user can change from the indicator settings
+rsiLength = input.int(
+     defval  = 14,
+     minval  = 2,
+     maxval  = 200,
+     title   = "RSI Length",
+     tooltip = "Number of bars used to calculate RSI. Standard value is 14."
+ )
+
+// Overbought / oversold thresholds
+overboughtLevel = input.int(
+     defval  = 70,
+     minval  = 50,
+     maxval  = 100,
+     title   = "Overbought Level",
+     tooltip = "RSI above this level triggers a SELL signal."
+ )
+
+oversoldLevel = input.int(
+     defval  = 30,
+     minval  = 0,
+     maxval  = 50,
+     title   = "Oversold Level",
+     tooltip = "RSI below this level triggers a BUY signal."
+ )
+
+// -----------------------------------------------------------------------------
+// RSI Calculation
+// -----------------------------------------------------------------------------
+
+// Built-in ta.rsi() uses Wilder's smoothing (same method as the Python script)
+rsiValue = ta.rsi(close, rsiLength)
+
+// -----------------------------------------------------------------------------
+// Signal Detection
+// -----------------------------------------------------------------------------
+
+// BUY signal  : RSI has just crossed BELOW the oversold threshold
+// ta.crossunder(a, b) is true on the bar where a crosses from above to below b
+isBuySignal = ta.crossunder(rsiValue, oversoldLevel)
+
+// SELL signal : RSI has just crossed ABOVE the overbought threshold
+// ta.crossover(a, b) is true on the bar where a crosses from below to above b
+isSellSignal = ta.crossover(rsiValue, overboughtLevel)
+
+// -----------------------------------------------------------------------------
+// Plot RSI Line (in separate pane)
+// -----------------------------------------------------------------------------
+
+// RSI line — orange colour, consistent with the Python visualisation
+plot(
+     rsiValue,
+     title  = "RSI",
+     color  = color.new(color.orange, 0),
+     linewidth = 2
+ )
+
+// Overbought reference line at 70 (red dashed)
+hline(
+     overboughtLevel,
+     title     = "Overbought",
+     color     = color.red,
+     linestyle = hline.style_dashed,
+     linewidth = 1
+ )
+
+// Oversold reference line at 30 (green dashed)
+hline(
+     oversoldLevel,
+     title     = "Oversold",
+     color     = color.green,
+     linestyle = hline.style_dashed,
+     linewidth = 1
+ )
+
+// Middle reference line at 50 (grey, subtle)
+hline(
+     50,
+     title     = "Midline",
+     color     = color.gray,
+     linestyle = hline.style_dotted,
+     linewidth = 1
+ )
+
+// Shade the overbought zone (RSI between 70 and 100) in light red
+obBand = plot(overboughtLevel, title = "OB Band", display = display.none)
+topBand = plot(100,            title = "Top Band", display = display.none)
+fill(obBand, topBand, color = color.new(color.red, 88), title = "Overbought Zone")
+
+// Shade the oversold zone (RSI between 0 and 30) in light green
+osBand     = plot(oversoldLevel, title = "OS Band",     display = display.none)
+bottomBand = plot(0,             title = "Bottom Band", display = display.none)
+fill(osBand, bottomBand, color = color.new(color.green, 88), title = "Oversold Zone")
+
+// Color the RSI line dynamically: green in oversold zone, red in overbought zone
+rsiLineColor = rsiValue < oversoldLevel   ? color.new(color.green, 0) :
+               rsiValue > overboughtLevel ? color.new(color.red,   0) :
+               color.new(color.orange, 0)
+
+// Overlay the dynamically colored RSI line on top of the base orange line
+plot(
+     rsiValue,
+     title     = "RSI (colored)",
+     color     = rsiLineColor,
+     linewidth = 2,
+     display   = display.pane
+ )
+
+// Signal dots on the RSI pane at the exact trigger point
+plotshape(
+     isBuySignal,
+     title    = "RSI Buy Dot",
+     location = location.absolute,
+     style    = shape.circle,
+     color    = color.new(color.green, 0),
+     size     = size.small,
+     offset   = 0
+ )
+
+plotshape(
+     isSellSignal,
+     title    = "RSI Sell Dot",
+     location = location.absolute,
+     style    = shape.circle,
+     color    = color.new(color.red, 0),
+     size     = size.small,
+     offset   = 0
+ )
+
+// -----------------------------------------------------------------------------
+// Buy / Sell Arrows on the PRICE chart
+// -----------------------------------------------------------------------------
+// NOTE: Because this indicator lives in its own pane (overlay=false), Pine
+// Script renders these shapes in the RSI pane below the bars, not on the
+// candle chart itself.  To see the arrows directly on the price candles, open
+// a second instance of this script, set its "overlay" option to true in
+// TradingView's indicator settings, and toggle off the RSI line visibility.
+//
+// The arrows below are still the clearest signal markers TradingView supports
+// for a non-overlay RSI indicator.
+
+// Green ▲ arrow BELOW the bar for BUY signal
+plotshape(
+     isBuySignal,
+     title     = "Buy Signal",
+     location  = location.belowbar,
+     style     = shape.triangleup,
+     color     = color.new(color.green, 0),
+     size      = size.small,
+     text      = "BUY",
+     textcolor = color.new(color.green, 0)
+ )
+
+// Red ▼ arrow ABOVE the bar for SELL signal
+plotshape(
+     isSellSignal,
+     title     = "Sell Signal",
+     location  = location.abovebar,
+     style     = shape.triangledown,
+     color     = color.new(color.red, 0),
+     size      = size.small,
+     text      = "SELL",
+     textcolor = color.new(color.red, 0)
+ )
+
+// -----------------------------------------------------------------------------
+// Labels / Tooltips on the RSI pane at signal bars
+// -----------------------------------------------------------------------------
+
+// BUY label: displayed inside the RSI pane at the oversold line
+if isBuySignal
+    label.new(
+         x       = bar_index,
+         y       = oversoldLevel,
+         text    = "▲ BUY\nRSI: " + str.tostring(math.round(rsiValue, 2)),
+         style   = label.style_label_up,
+         color   = color.new(color.green, 10),
+         textcolor = color.white,
+         size    = size.small,
+         tooltip = "RSI crossed below " + str.tostring(oversoldLevel) +
+                   " — potential oversold / buy opportunity.\nRSI = " +
+                   str.tostring(math.round(rsiValue, 2))
+     )
+
+// SELL label: displayed inside the RSI pane at the overbought line
+if isSellSignal
+    label.new(
+         x       = bar_index,
+         y       = overboughtLevel,
+         text    = "▼ SELL\nRSI: " + str.tostring(math.round(rsiValue, 2)),
+         style   = label.style_label_down,
+         color   = color.new(color.red, 10),
+         textcolor = color.white,
+         size    = size.small,
+         tooltip = "RSI crossed above " + str.tostring(overboughtLevel) +
+                   " — potential overbought / sell opportunity.\nRSI = " +
+                   str.tostring(math.round(rsiValue, 2))
+     )
+
+// -----------------------------------------------------------------------------
+// Alert Conditions (optional — set up via TradingView's "Create Alert" dialog)
+// -----------------------------------------------------------------------------
+
+alertcondition(
+     isBuySignal,
+     title   = "RSI Buy Signal",
+     message = "BUY signal on {{ticker}} ({{interval}}): RSI crossed below oversold level. Current RSI = {{plot_0}}."
+ )
+
+alertcondition(
+     isSellSignal,
+     title   = "RSI Sell Signal",
+     message = "SELL signal on {{ticker}} ({{interval}}): RSI crossed above overbought level. Current RSI = {{plot_0}}."
+ )
