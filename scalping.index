@@ -1,0 +1,43 @@
+//@version=6
+indicator("RSI Scalping Strategy", overlay = true)
+
+// Inputs
+rsiLength     = input.int(14,  "RSI Length")
+buyThreshold  = input.int(30,  "Buy RSI Threshold")
+sellThreshold = input.int(70,  "Sell RSI Threshold")
+
+// RSI
+rsi = ta.rsi(close, rsiLength)
+
+// Signals
+buySignal  = rsi < buyThreshold
+sellSignal = rsi > sellThreshold
+
+// Plot signals on price chart
+plotshape(buySignal, 
+     title    = "Buy Signal",
+     style    = shape.triangleup, 
+     location = location.belowbar, 
+     color    = color.green, 
+     text     = "BUY")
+
+plotshape(sellSignal, 
+     title    = "Sell Signal",
+     style    = shape.triangledown, 
+     location = location.abovebar, 
+     color    = color.red, 
+     text     = "SELL")
+
+// Plot RSI on price chart (since overlay=true)
+plot(rsi, title = "RSI", color = color.blue)
+hline(buyThreshold,  "Buy Threshold",  color = color.green)
+hline(sellThreshold, "Sell Threshold", color = color.red)
+
+// Alerts
+alertcondition(buySignal, 
+   title   = "Buy",  
+   message = "BUY signal: RSI below buy threshold")
+
+alertcondition(sellSignal, 
+   title   = "Sell", 
+   message = "SELL signal: RSI above sell threshold")

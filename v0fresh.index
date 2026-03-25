@@ -1,0 +1,137 @@
+//@version=6
+indicator("SMC Complete - FAST Pivots + SMART ENTRY", overlay=true, max_labels_count=500, max_boxes_count=100, max_lines_count=500)
+
+// Inputs
+showStructure = input.bool(true, "Show HH/HL/LH/LL")
+swingLen = input.int(1, "Swing Length", minval=1, maxval=5)
+showOB = input.bool(true, "Show Order Blocks")
+showLiq = input.bool(true, "Show Liquidity")
+showFVG = input.bool(true, "Show Fair Value Gaps")
+htfTF = input.timeframe("60", "Higher TF")
+useSession = input.bool(false, "Filter by Session")
+rrRatio = input.float(2.0, "Risk:Reward Ratio", minval=1.0, step=0.5)
+
+// Session
+inLondon = time(timeframe.period, "0800-1200")
+inNY = time(timeframe.period, "1330-2000")
+inSession = not useSession or (not na(inLondon) or not na(inNY))
+
+// Pivots
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float lastHigh = na
+var float lastLow = na
+
+if not na(ph)
+    prevHigh = lastHigh
+    lastHigh := ph
+    isHH = na(prevHigh) ? false : ph > prevHigh
+    if showStructure
+        label.new(bar_index-swingLen, ph, isHH ? "HH" : "LH", style=label.style_label_down, color=isHH ? color.green : color.red, textcolor=color.white)
+
+if not na(pl)
+    prevLow = lastLow
+    lastLow := pl
+    isHL = na(prevLow) ? false : pl > prevLow
+    if showStructure
+        label.new(bar_index-swingLen, pl, isHL ? "HL" : "LL", style=label.style_label_up, color=isHL ? color.green : color.red, textcolor=color.white)
+
+// Structure
+bullStruct = not na(lastHigh) and not na(lastLow) and lastHigh > lastHigh[swingLen*2] and lastLow > lastLow[swingLen*2]
+bearStruct = not na(lastHigh) and not na(lastLow) and lastHigh < lastHigh[swingLen*2] and lastLow < lastLow[swingLen*2]
+
+// BOS
+bosBull = not na(ph) and ph > nz(lastHigh[1])
+bosBear = not na(pl) and pl < nz(lastLow[1])
+
+plotshape(showStructure and bosBull, "BOS Bull", style=shape.labelup, location=location.belowbar, color=color.blue, text="BOS↑")
+plotshape(showStructure and bosBear, "BOS Bear", style=shape.labeldown, location=location.abovebar, color=color.purple, text="BOS↓")
+
+// Order Blocks
+var box[] bullOBs = array.new<box>()
+var box[] bearOBs = array.new<box>()
+
+if showOB
+    if close > high[2] and close[1] < open[1]
+        obBox = box.new(bar_index[1], low[1], bar_index+50, high[1], bgcolor=color.new(color.green, 85))
+        array.push(bullOBs, obBox)
+        if array.size(bullOBs) > 10
+            box.delete(array.shift(bullOBs))
+    
+    if close < low[2] and close[1] > open[1]
+        obBox = box.new(bar_index[1], low[1], bar_index+50, high[1], bgcolor=color.new(color.red, 85))
+        array.push(bearOBs, obBox)
+        if array.size(bearOBs) > 10
+            box.delete(array.shift(bearOBs))
+
+// FVG
+if showFVG
+    if low > high[2]
+        box.new(bar_index[2], high[2], bar_index, low, bgcolor=color.new(color.green, 90))
+    if high < low[2]
+        box.new(bar_index[2], low[2], bar_index, high, bgcolor=color.new(color.red, 90))
+
+// Liquidity
+liqHigh = ta.highest(high, 20)
+liqLow = ta.lowest(low, 20)
+
+liqSweepBull = showLiq and low < liqLow and close > liqLow
+liqSweepBear = showLiq and high > liqHigh and close < liqHigh
+
+plotshape(liqSweepBull, "SWP↑", style=shape.triangleup, location=location.belowbar, color=color.lime)
+plotshape(liqSweepBear, "SWP↓", style=shape.triangledown, location=location.abovebar, color=color.fuchsia)
+
+// HTF - Fixed version
+[htfCloseRaw, htfSMARaw] = request.security(syminfo.tickerid, htfTF, [close, ta.sma(close, 50)], lookahead=barmerge.lookahead_on)
+htfClose = timeframe.period == htfTF ? close[1] : htfCloseRaw
+htfSMA = timeframe.period == htfTF ? ta.sma(close, 50)[1] : htfSMARaw
+htfTrend = htfClose > htfSMA
+
+// OLD ENTRY (UNCHANGED)
+inBullZone = math.abs(close - lastLow) / close < 0.002
+inBearZone = math.abs(close - lastHigh) / close < 0.002
+
+buySignal = inSession and bullStruct and liqSweepBull and htfTrend and inBullZone
+sellSignal = inSession and bearStruct and liqSweepBear and not htfTrend and inBearZone
+
+plotshape(buySignal, "BUY", style=shape.labelup, location=location.belowbar, color=color.green, text="BUY")
+plotshape(sellSignal, "SELL", style=shape.labeldown, location=location.abovebar, color=color.red, text="SELL")
+
+// =======================
+// 🔥 NEW SMART ENTRY
+// =======================
+
+// Track sweep
+var int lastBullSweep = na
+var int lastBearSweep = na
+
+if liqSweepBull
+    lastBullSweep := bar_index
+
+if liqSweepBear
+    lastBearSweep := bar_index
+
+// Valid window
+waitBars = 5
+validBull = not na(lastBullSweep) and bar_index - lastBullSweep <= waitBars
+validBear = not na(lastBearSweep) and bar_index - lastBearSweep <= waitBars
+
+// Return to zone
+inBullZone2 = not na(lastLow) and close <= lastLow * 1.002
+inBearZone2 = not na(lastHigh) and close >= lastHigh * 0.998
+
+// Confirmation
+bullConfirm = close > open and close > high[1]
+bearConfirm = close < open and close < low[1]
+
+// SMART ENTRY
+buySmart = inSession and bullStruct and validBull and inBullZone2 and bullConfirm and htfTrend
+sellSmart = inSession and bearStruct and validBear and inBearZone2 and bearConfirm and not htfTrend
+
+plotshape(buySmart, "SMART BUY", style=shape.labelup, location=location.belowbar, color=color.lime, text="SMART BUY")
+plotshape(sellSmart, "SMART SELL", style=shape.labeldown, location=location.abovebar, color=color.orange, text="SMART SELL")
+
+// Alerts
+alertcondition(buySmart, "SMART BUY", "Smart Buy Entry")
+alertcondition(sellSmart, "SMART SELL", "Smart Sell Entry")

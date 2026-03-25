@@ -1,0 +1,101 @@
+//@version=6
+strategy("SMC HYBRID ULTIMATE V5.1", overlay=true, max_boxes_count=200, initial_capital=100, default_qty_type=strategy.cash, default_qty_value=100)
+
+// =======================
+// 1. INPUTS
+// =======================
+riskPerTrade   = input.float(5.0, title="Risk Per Trade (USD)")
+dailyLossLimit = input.float(20.0, title="Max Daily Loss (USD)")
+htfTF          = input.timeframe("60", title="Trend Filter (HTF)")
+confTF         = input.timeframe("5", title="Scalp Confirmation (MTF)")
+
+sniperRR       = input.float(2.5, title="Sniper RR")
+scalpRR        = input.float(1.5, title="Scalper RR")
+
+// =======================
+// 2. FILTERS
+// =======================
+adr = ta.atr(14)
+isNormalVol = (high - low) < (adr * 2.5)
+
+// MTF RSI (Non-Repainting)
+confRSI = request.security(syminfo.tickerid, confTF, ta.rsi(close, 14)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
+// =======================
+// 3. DAILY RESET
+// =======================
+var float startEquity = strategy.equity
+isNewDay = not na(ta.change(time("D")))
+if isNewDay
+    startEquity := strategy.equity
+
+currentDailyPnL = strategy.equity - startEquity
+canTradeToday   = currentDailyPnL > -dailyLossLimit
+
+// =======================
+// 4. TREND & STRUCTURE
+// =======================
+htf_val = request.security(syminfo.tickerid, htfTF, close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+htf_ema = request.security(syminfo.tickerid, htfTF, ta.ema(close, 50)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+htfTrendBull = htf_val > htf_ema
+
+liqHigh20 = ta.highest(high, 20)[1]
+liqLow20  = ta.lowest(low, 20)[1]
+liqHigh10 = ta.highest(high, 10)[1]
+liqLow10  = ta.lowest(low, 10)[1]
+
+sweepBull20 = low < liqLow20 and close > liqLow20
+sweepBear20 = high > liqHigh20 and close < liqHigh20
+sweepBull10 = low < liqLow10 and close > liqLow10
+sweepBear10 = high > liqHigh10 and close < liqHigh10
+
+bullCHoCH = close > high[1]
+bearCHoCH = close < low[1]
+
+// =======================
+// 5. SIGNALS
+// =======================
+sniperBuy   = canTradeToday and sweepBull20 and htfTrendBull and bullCHoCH and isNormalVol
+sniperSell  = canTradeToday and sweepBear20 and not htfTrendBull and bearCHoCH and isNormalVol
+
+scalperBuy  = canTradeToday and sweepBull10 and confRSI > 50 and bullCHoCH and isNormalVol and not sniperBuy
+scalperSell = canTradeToday and sweepBear10 and confRSI < 50 and bearCHoCH and isNormalVol and not sniperSell
+
+// =======================
+// 6. EXECUTION (FIXED SYNTAX)
+// =======================
+if strategy.position_size == 0
+    if sniperBuy or scalperBuy
+        float rr_val = sniperBuy ? sniperRR : scalpRR
+        float sl = low[1] < close ? low[1] : low - (syminfo.mintick * 10)
+        float diff = close - sl
+        float qty = diff > 0 ? riskPerTrade / diff : na
+        if not na(qty)
+            strategy.entry("LONG", strategy.long, qty=qty)
+            strategy.exit("EX_L", "LONG", stop=sl, limit=close + (diff * rr_val), comment=sniperBuy ? "SNIPER" : "SCALP")
+
+    if sniperSell or scalperSell
+        float rr_val = sniperSell ? sniperRR : scalpRR
+        float sl = high[1] > close ? high[1] : high + (syminfo.mintick * 10)
+        float diff = sl - close
+        float qty = diff > 0 ? riskPerTrade / diff : na
+        if not na(qty)
+            strategy.entry("SHORT", strategy.short, qty=qty)
+            strategy.exit("EX_S", "SHORT", stop=sl, limit=close - (diff * rr_val), comment=sniperSell ? "SNIPER" : "SCALP")
+
+// =======================
+// 7. VISUALS (FIXED PLOTSHAPE)
+// =======================
+plotshape(sniperBuy, title="Sniper Buy", location=location.belowbar, color=color.green, style=shape.labelup, text="SNIPER", textcolor=color.white, size=size.small)
+plotshape(sniperSell, title="Sniper Sell", location=location.abovebar, color=color.red, style=shape.labeldown, text="SNIPER", textcolor=color.white, size=size.small)
+plotshape(scalperBuy, title="Scalp Buy", location=location.belowbar, color=color.blue, style=shape.triangleup, text="SCALP", textcolor=color.white, size=size.tiny)
+plotshape(scalperSell, title="Scalp Sell", location=location.abovebar, color=color.orange, style=shape.triangledown, text="SCALP", textcolor=color.white, size=size.tiny)
+
+// Dashboard
+var table panel = table.new(position.top_right, 2, 3, bgcolor=color.new(color.black, 70), border_width=1)
+table.cell(panel, 0, 0, "Daily PnL:", text_color=color.white)
+table.cell(panel, 1, 0, str.tostring(currentDailyPnL, "#.##") + " USD", text_color = currentDailyPnL >= 0 ? color.green : color.red)
+table.cell(panel, 0, 1, "HTF Trend:", text_color=color.white)
+table.cell(panel, 1, 1, htfTrendBull ? "BULLISH" : "BEARISH", text_color = htfTrendBull ? color.green : color.red)
+table.cell(panel, 0, 2, "Status:", text_color=color.white)
+table.cell(panel, 1, 2, canTradeToday ? "ACTIVE" : "LOCKED", text_color = canTradeToday ? color.green : color.red)

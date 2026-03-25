@@ -1,0 +1,77 @@
+//@version=6
+indicator("SMC Complete - FINAL Fixed", overlay=true, max_labels_count=500, max_boxes_count=100, max_lines_count=500)
+
+// Inputs - Simplified
+showStructure = input.bool(true, "Show HH/HL/LH/LL")
+swingLen = input.int(5, "Swing Length", minval=2, maxval=20)
+showOB = input.bool(true, "Show Order Blocks")
+showLiq = input.bool(true, "Show Liquidity")
+showFVG = input.bool(true, "Show Fair Value Gaps")
+htfTF = input.timeframe("1h", "Higher Timeframe")
+useSession = input.bool(false, "Filter by Session") // Disabled by default
+rrRatio = input.float(2.0, "Risk:Reward Ratio", minval=1.0, step=0.5)
+
+// FIXED Session Filter
+inLondon = time(timeframe.period, "0800-1200")
+inNY = time(timeframe.period, "1330-2000")
+inSession = not useSession or (not na(inLondon) or not na(inNY))
+
+// Market Structure
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float lastHigh = na
+var float lastLow = na
+
+if not na(ph)
+    prevHigh = lastHigh
+    lastHigh := ph
+    isHH = na(prevHigh) ? false : ph > prevHigh
+    lblTxt = isHH ? "HH" : "LH"
+    lblCol = isHH ? color.green : color.red
+    if showStructure
+        label.new(bar_index-swingLen, ph, lblTxt, style=label.style_label_down, color=lblCol, textcolor=color.white, size=size.small)
+
+if not na(pl)
+    prevLow = lastLow
+    lastLow := pl
+    isHL = na(prevLow) ? false : pl > prevLow
+    lblTxt = isHL ? "HL" : "LL"
+    lblCol = isHL ? color.green : color.red
+    if showStructure
+        label.new(bar_index-swingLen, pl, lblTxt, style=label.style_label_up, color=lblCol, textcolor=color.white, size=size.small)
+
+bullStruct = not na(lastHigh) and not na(lastLow) and lastHigh > lastHigh[swingLen*2] and lastLow > lastLow[swingLen*2]
+bearStruct = not na(lastHigh) and not na(lastLow) and lastHigh < lastHigh[swingLen*2] and lastLow < lastLow[swingLen*2]
+
+bosBull = not na(ph) and ph > nz(lastHigh[1])
+bosBear = not na(pl) and pl < nz(lastLow[1])
+
+plotshape(showStructure and bosBull, "BOS Bull", style=shape.labelup, location=location.belowbar, color=color.blue, text="BOS↑", textcolor=color.white)
+plotshape(showStructure and bosBear, "BOS Bear", style=shape.labeldown, location=location.abovebar, color=color.purple, text="BOS↓", textcolor=color.white)
+
+// Order Blocks
+var box[] bullOBs = array.new<box>()
+var box[] bearOBs = array.new<box>()
+
+if showOB
+    strongBullMove = close > high[2] and close[1] < open[1]
+    if strongBullMove
+        obBox = box.new(bar_index[1], low[1], bar_index+50, high[1], border_color=color.green, bgcolor=color.new(color.green, 85))
+        array.push(bullOBs, obBox)
+        if array.size(bullOBs) > 10
+            box.delete(array.shift(bullOBs))
+    
+    strongBearMove = close < low[2] and close[1] > open[1]
+    if strongBearMove
+        obBox = box.new(bar_index[1], low[1], bar_index+50, high[1], border_color=color.red, bgcolor=color.new(color.red, 85))
+        array.push(bearOBs, obBox)
+        if array.size(bearOBs) > 10
+            box.delete(array.shift(bearOBs))
+
+// Fair Value Gaps
+var box[] fvgBulls = array.new<box>()
+var box[] fvgBears = array.new<box>()
+
+
+  

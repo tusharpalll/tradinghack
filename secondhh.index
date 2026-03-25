@@ -1,0 +1,175 @@
+//@version=6
+indicator("SMC SNIPER PRO MAX (FIXED)", overlay=true, max_boxes_count=200)
+
+
+// =======================
+// INPUTS
+// =======================
+rr = input.float(2.0, "RR")
+swingLen = input.int(2, "Swing Length")
+waitBars = input.int(5, "Sweep Window")
+useSession = input.bool(false, "Use Session")
+
+// ✅ HTF INPUT (FIXED)
+htfTF = input.timeframe("60", "HTF Timeframe")
+
+// =======================
+// SESSION
+// =======================
+inLondon = time(timeframe.period, "0800-1200")
+inNY = time(timeframe.period, "1330-2000")
+inSession = not useSession or (not na(inLondon) or not na(inNY))
+
+// =======================
+// STRUCTURE
+// =======================
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float lastHH = na
+var float lastLL = na
+
+if not na(ph)
+    lastHH := ph
+
+if not na(pl)
+    lastLL := pl
+
+bullStruct = not na(lastHH) and close > lastHH
+bearStruct = not na(lastLL) and close < lastLL
+
+// =======================
+// BOS (Fixed: separate ta.crossover / ta.crossunder)
+// =======================
+crossUp = ta.crossover(close, lastHH)
+crossDown = ta.crossunder(close, lastLL)
+
+bosBull = not na(lastHH) and crossUp
+bosBear = not na(lastLL) and crossDown
+
+// =======================
+// LIQUIDITY
+// =======================
+liqHigh = ta.highest(high, 20)
+liqLow = ta.lowest(low, 20)
+
+liqSweepBull = low < liqLow and close > liqLow
+liqSweepBear = high > liqHigh and close < liqHigh
+
+// Track sweep
+var int lastBullSweep = na
+var int lastBearSweep = na
+
+if liqSweepBull
+    lastBullSweep := bar_index
+
+if liqSweepBear
+    lastBearSweep := bar_index
+
+// ✅ SAFE VALIDATION (FIXED)
+validBull = not na(lastBullSweep) and (bar_index - lastBullSweep <= waitBars)
+validBear = not na(lastBearSweep) and (bar_index - lastBearSweep <= waitBars)
+
+// =======================
+// ORDER BLOCK (ARRAY)
+// =======================
+var float[] obHigh = array.new_float()
+var float[] obLow = array.new_float()
+var int[] obType = array.new_int()
+
+bullOB = close > high[2] and close[1] < open[1]
+bearOB = close < low[2] and close[1] > open[1]
+
+if bullOB
+    array.push(obHigh, high[1])
+    array.push(obLow, low[1])
+    array.push(obType, 1)
+
+if bearOB
+    array.push(obHigh, high[1])
+    array.push(obLow, low[1])
+    array.push(obType, -1)
+
+// =======================
+// FVG
+// =======================
+bullFVG = low > high[2]
+bearFVG = high < low[2]
+
+// =======================
+// CHECK ZONE + MITIGATION (Fixed: prevent array.get() crash)
+// =======================
+inBullZone = false
+inBearZone = false
+float zoneLow = na
+float zoneHigh = na
+
+if array.size(obHigh) > 0
+    for i = array.size(obHigh) - 1 to 0
+        hi = array.get(obHigh, i)
+        lo = array.get(obLow, i)
+        type = array.get(obType, i)
+
+        // Mitigation
+        if close < lo or close > hi
+            array.remove(obHigh, i)
+            array.remove(obLow, i)
+            array.remove(obType, i)
+        else
+            if type == 1 and close <= hi and close >= lo
+                inBullZone := true
+                zoneLow := lo
+                zoneHigh := hi
+            if type == -1 and close <= hi and close >= lo
+                inBearZone := true
+                zoneLow := lo
+                zoneHigh := hi
+
+// =======================
+// HTF TREND
+// =======================
+htfClose = request.security(syminfo.tickerid, htfTF, close[1], lookahead=barmerge.lookahead_off)
+htfSMA   = request.security(syminfo.tickerid, htfTF, ta.sma(close, 50)[1], lookahead=barmerge.lookahead_off)
+
+htfTrend = htfClose > htfSMA
+
+// =======================
+// CONFIRMATION
+// =======================
+bullConfirm = close > open and close > high[1]
+bearConfirm = close < open and close < low[1]
+
+// =======================
+// SNIPER ENTRY
+// =======================
+buy = inSession and bullStruct and bosBull and validBull and inBullZone and bullConfirm and htfTrend and bullFVG
+sell = inSession and bearStruct and bosBear and validBear and inBearZone and bearConfirm and not htfTrend and bearFVG
+
+// =======================
+// SL / TP
+// =======================
+var float sl = na
+var float tp = na
+
+if buy and not na(zoneLow)
+    sl := zoneLow
+    tp := close + (close - sl) * rr
+
+if sell and not na(zoneHigh)
+    sl := zoneHigh
+    tp := close - (sl - close) * rr
+
+// =======================
+// PLOTS
+// =======================
+plotshape(buy, location=location.belowbar, color=color.green, style=shape.labelup, text="SNIPER BUY")
+plotshape(sell, location=location.abovebar, color=color.red, style=shape.labeldown, text="SNIPER SELL")
+
+plot(sl, color=color.red, title="SL")
+plot(tp, color=color.green, title="TP")
+
+// =======================
+// ALERTS
+// =======================
+alertcondition(buy, "BUY", "Sniper Buy")
+alertcondition(sell, "SELL", "Sniper Sell")

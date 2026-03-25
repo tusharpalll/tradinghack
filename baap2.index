@@ -1,0 +1,120 @@
+//@version=6
+strategy("SMC SNIPER UNIFIED", overlay=true, max_boxes_count=200, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// =======================
+// 1. INPUTS
+// =======================
+rr          = input.float(2.0, "Risk:Reward Ratio", minval=0.1)
+useBE       = input.bool(true, "Move to Break-Even at 1:1 Profit")
+htfTF       = input.timeframe("60", "Higher Timeframe Filter")
+showLiquidity = input.bool(true, "Show Liquidity Levels")
+
+// =======================
+// 2. DATA FETCHING (HTF)
+// =======================
+// Get HTF Close and EMA for trend filtering (Non-repainting)
+htf_close = request.security(syminfo.tickerid, htfTF, close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+htf_ema   = request.security(syminfo.tickerid, htfTF, ta.ema(close, 50)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+htfTrendBull = htf_close > htf_ema
+
+// =======================
+// 3. SMC LOGIC: LIQUIDITY & OBs
+// =======================
+// Liquidity Sweeps (using 20-period highs/lows)
+liqHigh = ta.highest(high, 20)[1]
+liqLow  = ta.lowest(low, 20)[1]
+sweepBull = low < liqLow and close > liqLow
+sweepBear = high > liqHigh and close < liqHigh
+
+// Order Block (OB) Logic
+var float bullOB_Low = na
+var float bearOB_High = na
+
+// Define an OB as a strong engulfing candle
+if (close > high[2] and close[1] < open[1]) 
+    bullOB_Low := low[1]
+
+if (close < low[2] and close[1] > open[1]) 
+    bearOB_High := high[1]
+
+// Mitigation: If price closes past the OB, it's no longer valid
+if (close < bullOB_Low)
+    bullOB_Low := na
+if (close > bearOB_High)
+    bearOB_High := na
+
+// Displacement / Fair Value Gap (FVG)
+isFVGBull = low > high[2] 
+isFVGBear = high < low[2] 
+
+// =======================
+// 4. SCORING SYSTEM
+// =======================
+scoreBuy = 0
+scoreSell = 0
+
+// Bullish Scoring
+scoreBuy += (htfTrendBull) ? 2 : 0
+scoreBuy += (sweepBull) ? 2 : 0
+scoreBuy += (not na(bullOB_Low) and close > bullOB_Low) ? 2 : 0
+scoreBuy += (isFVGBull) ? 1 : 0
+
+// Bearish Scoring
+scoreSell += (not htfTrendBull) ? 2 : 0
+scoreSell += (sweepBear) ? 2 : 0
+scoreSell += (not na(bearOB_High) and close < bearOB_High) ? 2 : 0
+scoreSell += (isFVGBear) ? 1 : 0
+
+buySignal  = scoreBuy >= 5
+sellSignal = scoreSell >= 5
+
+// =======================
+// 5. TRADE EXECUTION
+// =======================
+var float t_entry = na
+var float t_sl    = na
+var float t_tp    = na
+
+if buySignal and strategy.position_size == 0
+    t_entry := close
+    t_sl    := low[1] < close ? low[1] : low - (syminfo.mintick * 20)
+    t_tp    := close + (close - t_sl) * rr
+    strategy.entry("SMC_Long", strategy.long)
+    strategy.exit("Exit_Long", "SMC_Long", stop=t_sl, limit=t_tp, comment_loss="SL", comment_profit="TP")
+
+if sellSignal and strategy.position_size == 0
+    t_entry := close
+    t_sl    := high[1] > close ? high[1] : high + (syminfo.mintick * 20)
+    t_tp    := close - (t_sl - close) * rr
+    strategy.entry("SMC_Short", strategy.short)
+    strategy.exit("Exit_Short", "SMC_Short", stop=t_sl, limit=t_tp, comment_loss="SL", comment_profit="TP")
+
+// Break-Even Logic
+if useBE and strategy.position_size != 0
+    risk_dist = math.abs(t_entry - t_sl)
+    if strategy.position_size > 0 and high >= t_entry + risk_dist
+        strategy.exit("Exit_Long", "SMC_Long", stop=t_entry, limit=t_tp, comment="BE_Active")
+    
+    if strategy.position_size < 0 and low <= t_entry - risk_dist
+        strategy.exit("Exit_Short", "SMC_Short", stop=t_entry, limit=t_tp, comment="BE_Active")
+
+// Reset trackers when flat
+if strategy.position_size == 0
+    t_entry := na
+    t_sl    := na
+    t_tp    := na
+
+// =======================
+// 6. VISUAL PLOTS
+// =======================
+// Plot Liquidity Levels
+plot(showLiquidity ? liqHigh : na, "Liq High", color=color.new(color.red, 60), style=plot.style_stepline)
+plot(showLiquidity ? liqLow : na, "Liq Low", color=color.new(color.green, 60), style=plot.style_stepline)
+
+// Plot Entry Signals
+plotshape(buySignal, "Buy Label", location=location.belowbar, color=color.green, style=shape.labelup, text="SMC BUY", textcolor=color.white, size=size.small)
+plotshape(sellSignal, "Sell Label", location=location.abovebar, color=color.red, style=shape.labeldown, text="SMC SELL", textcolor=color.white, size=size.small)
+
+// Visual OB Zones
+plot(bullOB_Low, "Bull OB", color=color.new(color.green, 80), style=plot.style_linebr, linewidth=2)
+plot(bearOB_High, "Bear OB", color=color.new(color.red, 80), style=plot.style_linebr, linewidth=2)
