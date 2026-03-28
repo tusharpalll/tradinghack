@@ -1,0 +1,185 @@
+//@version=6
+indicator("SMC Complete - FAST Pivots + SMART ENTRY (OB PRO)", overlay=true, max_labels_count=500, max_boxes_count=100, max_lines_count=500)
+
+// Inputs
+showStructure = input.bool(true, "Show HH/HL/LH/LL")
+swingLen = input.int(1, "Swing Length", minval=1, maxval=5)
+showOB = input.bool(true, "Show Order Blocks")
+showLiq = input.bool(true, "Show Liquidity")
+showFVG = input.bool(true, "Show Fair Value Gaps")
+htfTF = input.timeframe("60", "Higher TF")
+useSession = input.bool(false, "Filter by Session")
+rrRatio = input.float(2.0, "Risk:Reward Ratio", minval=1.0, step=0.5)
+
+// Session
+inLondon = time(timeframe.period, "0800-1200")
+inNY = time(timeframe.period, "1330-2000")
+inSession = not useSession or (not na(inLondon) or not na(inNY))
+
+// Pivots
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float lastHigh = na
+var float lastLow = na
+
+if not na(ph)
+    prevHigh = lastHigh
+    lastHigh := ph
+    isHH = na(prevHigh) ? false : ph > prevHigh
+    if showStructure
+        label.new(bar_index-swingLen, ph, isHH ? "HH" : "LH", style=label.style_label_down, color=isHH ? color.green : color.red, textcolor=color.white)
+
+if not na(pl)
+    prevLow = lastLow
+    lastLow := pl
+    isHL = na(prevLow) ? false : pl > prevLow
+    if showStructure
+        label.new(bar_index-swingLen, pl, isHL ? "HL" : "LL", style=label.style_label_up, color=isHL ? color.green : color.red, textcolor=color.white)
+
+// Structure
+bullStruct = not na(lastHigh) and not na(lastLow) and lastHigh > lastHigh[swingLen*2] and lastLow > lastLow[swingLen*2]
+bearStruct = not na(lastHigh) and not na(lastLow) and lastHigh < lastHigh[swingLen*2] and lastLow < lastLow[swingLen*2]
+
+// BOS
+bosBull = not na(ph) and ph > nz(lastHigh[1])
+bosBear = not na(pl) and pl < nz(lastLow[1])
+
+plotshape(showStructure and bosBull, "BOS Bull", style=shape.labelup, location=location.belowbar, color=color.blue, text="BOS↑")
+plotshape(showStructure and bosBear, "BOS Bear", style=shape.labeldown, location=location.abovebar, color=color.purple, text="BOS↓")
+
+// =======================
+// ORDER BLOCKS
+// =======================
+var box[] bullOBs = array.new<box>()
+var box[] bearOBs = array.new<box>()
+
+if showOB
+    if close > high[2] and close[1] < open[1]
+        obBox = box.new(bar_index[1], low[1], bar_index+50, high[1], bgcolor=color.new(color.green, 85))
+        array.push(bullOBs, obBox)
+        if array.size(bullOBs) > 10
+            box.delete(array.shift(bullOBs))
+    
+    if close < low[2] and close[1] > open[1]
+        obBox = box.new(bar_index[1], low[1], bar_index+50, high[1], bgcolor=color.new(color.red, 85))
+        array.push(bearOBs, obBox)
+        if array.size(bearOBs) > 10
+            box.delete(array.shift(bearOBs))
+
+// =======================
+// LIQUIDITY
+// =======================
+liqHigh = ta.highest(high, 20)
+liqLow = ta.lowest(low, 20)
+
+liqSweepBull = showLiq and low < liqLow and close > liqLow
+liqSweepBear = showLiq and high > liqHigh and close < liqHigh
+
+plotshape(liqSweepBull, "SWP↑", style=shape.triangleup, location=location.belowbar, color=color.lime)
+plotshape(liqSweepBear, "SWP↓", style=shape.triangledown, location=location.abovebar, color=color.fuchsia)
+
+// =======================
+// HTF (FIXED - NO REPAINT)
+// =======================
+[htfCloseRaw, htfSMARaw] = request.security(syminfo.tickerid, htfTF, [close, ta.sma(close, 50)], lookahead=barmerge.lookahead_off)
+htfTrend = htfCloseRaw > htfSMARaw
+
+// =======================
+// SMART ENTRY (OB BASED)
+// =======================
+
+// Track sweep
+var int lastBullSweep = na
+var int lastBearSweep = na
+
+if liqSweepBull
+    lastBullSweep := bar_index
+
+if liqSweepBear
+    lastBearSweep := bar_index
+
+waitBars = 5
+validBull = not na(lastBullSweep) and bar_index - lastBullSweep <= waitBars
+validBear = not na(lastBearSweep) and bar_index - lastBearSweep <= waitBars
+
+// OB ZONE DETECTION (IMPROVED)
+inBullZone = false
+inBearZone = false
+
+if array.size(bullOBs) > 0
+    for i = array.size(bullOBs) - 1 to 0
+        ob = array.get(bullOBs, i)
+
+        // ❌ remove broken OB
+        if close < box.get_bottom(ob) or close > box.get_top(ob)
+            box.delete(ob)
+            continue
+
+        // ✅ only valid close inside OB
+        if close <= box.get_top(ob) and close >= box.get_bottom(ob)
+            inBullZone := true
+            break
+
+if array.size(bearOBs) > 0
+    for i = array.size(bearOBs) - 1 to 0
+        ob = array.get(bearOBs, i)
+
+        if close < box.get_bottom(ob) or close > box.get_top(ob)
+            box.delete(ob)
+            continue
+
+        if close <= box.get_top(ob) and close >= box.get_bottom(ob)
+            inBearZone := true
+            break
+
+// Confirmation
+bullConfirm = close > open and close > high[1]
+bearConfirm = close < open and close < low[1]
+
+// FINAL ENTRY (WITH BOS)
+buySmart = inSession and bullStruct and bosBull and validBull and inBullZone and bullConfirm and htfTrend
+sellSmart = inSession and bearStruct and bosBear and validBear and inBearZone and bearConfirm and not htfTrend
+
+plotshape(buySmart, "SMART BUY", style=shape.labelup, location=location.belowbar, color=color.lime, text="BUY")
+plotshape(sellSmart, "SMART SELL", style=shape.labeldown, location=location.abovebar, color=color.orange, text="SELL")
+
+// =======================
+// SL / TP (SMART)
+// =======================
+var float sl = na
+var float tp = na
+
+if buySmart and array.size(bullOBs) > 0
+    for i = array.size(bullOBs) - 1 to 0
+        ob = array.get(bullOBs, i)
+        if close <= box.get_top(ob) and close >= box.get_bottom(ob)
+            sl := box.get_bottom(ob)
+            break
+    risk = math.min(close - sl, close * 0.01)
+    tp := close + risk * rrRatio
+
+if sellSmart and array.size(bearOBs) > 0
+    for i = array.size(bearOBs) - 1 to 0
+        ob = array.get(bearOBs, i)
+        if close <= box.get_top(ob) and close >= box.get_bottom(ob)
+            sl := box.get_top(ob)
+            break
+    risk = math.min(sl - close, close * 0.01)
+    tp := close - risk * rrRatio
+
+plot(sl, color=color.red, title="SL")
+plot(tp, color=color.green, title="TP")
+
+// =======================
+// VISUAL ZONES
+// =======================
+bgcolor(
+     inBullZone ? color.new(color.green, 92) :
+     inBearZone ? color.new(color.red, 92) :
+     na
+)
+
+// Alerts
+alertcondition(buySmart, "SMART BUY", "Smart Buy Entry")
+alertcondition(sellSmart, "SMART SELL", "Smart Sell Entry")
