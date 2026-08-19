@@ -1,7 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../includes/bootstrap.php';
-require_login('admin');
+require_login('admin', '/admin/login.php');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf($_POST['csrf_token'] ?? null)) {

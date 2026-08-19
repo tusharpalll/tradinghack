@@ -80,11 +80,11 @@ function current_user(): ?array
     return $_SESSION['user'] ?? null;
 }
 
-function require_login(?string $role = null): void
+function require_login(?string $role = null, string $loginPath = '/login.php'): void
 {
     $user = current_user();
     if (!$user) {
-        header('Location: /login.php');
+        header('Location: ' . $loginPath);
         exit;
     }
 
